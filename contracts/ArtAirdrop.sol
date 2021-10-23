@@ -28,7 +28,7 @@ contract ArtAirdrop is ERC721URIStorage {
         _;
     }
 
-    constructor(address payable _owner) ERC721("Diamond Boyz Army", "ART") {
+    constructor(address payable _owner) ERC721("ART", "ART") {
         owner = _owner;
     }
 
