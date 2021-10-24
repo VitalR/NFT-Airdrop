@@ -3,8 +3,8 @@ pragma solidity ^0.8.3;
 pragma experimental ABIEncoderV2; // use dynamic arrays of strings
 
 import "@openzeppelin/contracts/utils/Counters.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 
 import "hardhat/console.sol";
 
@@ -15,13 +15,21 @@ contract ArtAirdrop is ERC721URIStorage {
     address payable public owner;
     uint256 public immutable maxSupply = 10000;
     uint256 public listingPrice = 0.08 ether; // 80000000000000000 wei;
-    
+    uint256 private soldCount = 0;
+    bool private startSale = false;
+    string baseUrl = "https://artairdrop.mypinata.cloud/ipfs/QmeDt7VqrLZV2YYNoGfCAht5nob7MR2Q7pyJ5mka8BYAe7/";
+
+    // Mapping for reserved urls
     mapping (string => bool) private _urlReserved;
+    // Mapping from owner to list of owned token IDs
+    mapping(address => mapping(uint256 => uint256)) private _ownedTokens;
+    // Mapping from token ID to index of the owner tokens list
+    mapping(uint256 => uint256) private _ownedTokensIndex;
     
     event Minted(uint256 indexed newItemId, address tokenMinter);
     event SaleMint(address indexed tokenMinter, uint256 numberOfTokens);
     event TokenURIChanged(uint256 tokenId, string newTokenURI);
-    event TokenPriceChanged(uint256 newTokenPrice);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier onlyOwner() {
         require(owner == _msgSender(), "ART: caller is not the owner");
@@ -35,12 +43,14 @@ contract ArtAirdrop is ERC721URIStorage {
     function mintART(
         address recipient,
         string[] memory tokenURI,
-        uint numberOfTokens
-    ) public payable returns (uint256[] memory) {
-        uint256 maxARTPurchase = 20;
+        uint[] memory tokenIds
+    ) public payable {
+        uint256 maxDbaPurchase = 20;
+        uint256 numberOfTokens = tokenIds.length;
         uint256 totalPrice = listingPrice * numberOfTokens; 
         uint256 originalUserBalance = balanceOf(recipient);
 
+        require(startSale == true, "ART: Sale is not started yet");
         require(recipient != address(0), "ART: zero address");
         require(numberOfTokens > 0, "ART: invalid number of tokens");
         require(tokenURI.length == numberOfTokens,"ART: not appropriate number of tokens and tokenURIs");
@@ -52,24 +62,24 @@ contract ArtAirdrop is ERC721URIStorage {
         );
 
         require(
-            balanceOf(recipient) + numberOfTokens <= maxARTPurchase,
+            balanceOf(recipient) + numberOfTokens <= maxDbaPurchase,
             "ART: max purchase per user exceeded"
         );
 
-        uint[] memory itemIds = new uint[](numberOfTokens);
-
         for (uint256 i = 0; i < numberOfTokens; i++) {
-            _tokenIds.increment();
-
-            uint256 newItemId = _tokenIds.current();
-            _mint(recipient, newItemId);
-            _setTokenURI(newItemId, tokenURI[i]);
-            itemIds[i] = newItemId;
-            
             require(isURLReserved(tokenURI[i]) == false, "ART: URL already reserved");
             _urlReserved[tokenURI[i]] = true;
             
-            emit Minted(newItemId, msg.sender);
+            string memory tokenUri = string(abi.encodePacked(baseUrl, tokenURI[i], ".json"));
+
+            _mint(recipient, tokenIds[i]);
+            _setTokenURI(tokenIds[i], tokenUri);
+
+            _addTokenToOwnerEnumeration(recipient, tokenIds[i]);
+            
+            emit Minted(tokenIds[i], msg.sender);
+            
+            soldCount++;
         }
         
         assert(balanceOf(recipient) == originalUserBalance + numberOfTokens);
@@ -77,18 +87,17 @@ contract ArtAirdrop is ERC721URIStorage {
         payable(owner).transfer(msg.value);
 
         emit SaleMint(msg.sender, numberOfTokens);
-
-        return itemIds;
     }
 
-    function reserveART(address recipient, string[] memory tokenURI, uint numberOfTokens)
+    function reserveART(address recipient, string[] memory tokenURI, uint[] memory tokenIds)
         public
         onlyOwner
-        returns (uint256[] memory) 
     {
-        uint256 maxARTReserve = 100; 
+        uint256 maxDbaReserve = 100; 
+        uint256 numberOfTokens = tokenIds.length;
         uint256 originalUserBalance = balanceOf(recipient);
 
+        require(startSale == true, "ART: Sale is not started yet");
         require(recipient != address(0), "ART: zero address");
         require(numberOfTokens > 0, "ART: invalid number of tokens");
         require(tokenURI.length == numberOfTokens,"ART: not appropriate number of tokens and tokenURIs");
@@ -99,31 +108,29 @@ contract ArtAirdrop is ERC721URIStorage {
         );
 
         require(
-            balanceOf(recipient) + numberOfTokens <= maxARTReserve,
+            balanceOf(recipient) + numberOfTokens <= maxDbaReserve,
             "ART: max reserve count exceeded"
         );
 
-        uint[] memory itemIds = new uint[](numberOfTokens);
-
         for (uint256 i = 0; i < numberOfTokens; i++) {
-            _tokenIds.increment();
-
-            uint256 newItemId = _tokenIds.current();
-            _mint(recipient, newItemId);
-            _setTokenURI(newItemId, tokenURI[i]);
-            itemIds[i] = newItemId;
-            
             require(isURLReserved(tokenURI[i]) == false, "ART: URL already reserved");
             _urlReserved[tokenURI[i]] = true;
+
+            string memory tokenUri = string(abi.encodePacked(baseUrl, tokenURI[i], ".json"));
             
-            emit Minted(newItemId, msg.sender);
+            _mint(recipient, tokenIds[i]);
+            _setTokenURI(tokenIds[i], tokenUri);
+            
+            _addTokenToOwnerEnumeration(recipient, tokenIds[i]);
+            
+            emit Minted(tokenIds[i], msg.sender);
+            
+            soldCount++;
         }
         
         assert(balanceOf(recipient) == originalUserBalance + numberOfTokens);
 
         emit SaleMint(msg.sender, numberOfTokens);
-        
-        return itemIds;
     }
 
     function isURLReserved(string memory urlString) public view returns (bool) {
@@ -138,5 +145,60 @@ contract ArtAirdrop is ERC721URIStorage {
         _setTokenURI(tokenId, _newTokenURI);
         _urlReserved[_newTokenURI] = true;
         emit TokenURIChanged(tokenId, _newTokenURI);
+    }
+
+    function getStartSale() public view returns (bool) {
+        return startSale;
+    }
+
+    function setStartSale(bool _startSale) public onlyOwner {
+        require(startSale == false, "ART: Start sale run only once");
+        startSale = _startSale;
+    }
+
+    function _tokenOfOwnerByIndex(address user, uint256 index) private view returns (uint256) {
+        require(index <= ERC721.balanceOf(user), "ERC721Enumerable: user index out of bounds");
+        return _ownedTokens[user][index];
+    }
+
+    function _addTokenToOwnerEnumeration(address to, uint256 tokenId) private {
+        uint256 length = ERC721.balanceOf(to);
+        _ownedTokens[to][length] = tokenId;
+        _ownedTokensIndex[tokenId] = length;
+    }
+
+    function tokensOfOwner(address user) public view returns (uint256[] memory) {
+        uint256 tokenCount = balanceOf(user);
+
+        if (tokenCount == 0) {
+            // Return an empty array
+            return new uint256[](0);
+        } else {
+            uint256[] memory result = new uint256[](tokenCount);
+            uint256 tokenByIndex = 0;
+            uint resultIndex = 0;
+            uint256 index;
+
+            for (index = 1; index <= tokenCount; index++) {
+                tokenByIndex = _tokenOfOwnerByIndex(user, index);
+                result[resultIndex] = tokenByIndex;
+                resultIndex++;
+            }
+            return result;
+        }      
+    }
+    
+    function getSoldCount() public view returns (uint256) {
+        return soldCount;
+    }
+    
+    function renounceOwnership() public onlyOwner {
+        _transferOwnership(address(0));
+    }
+    
+    function _transferOwnership(address newOwner) internal {
+        address oldOwner = owner;
+        owner = payable(newOwner);
+        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
